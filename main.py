@@ -15,8 +15,13 @@ cap.set(4, CAM_HEIGHT)
 detector = HandDetector()
 prev_x, prev_y = 0, 0
 smooth_x, smooth_y = 0, 0
-left_clicked = right_clicked = drag_started = False
 last_click_time = time.time()
+
+# Gesture states
+pinch_active = False
+pinch_start_time = 0
+drag_started = False
+right_click_hold_frames = 0
 
 while True:
     ret, frame = cap.read()
@@ -41,43 +46,56 @@ while True:
 
         move_cursor(smooth_x, smooth_y)
 
-        # Gesture Detection
+        # Gesture distances
         dist_thumb_index = get_distance(thumb, index_finger)
         dist_index_middle = get_distance(index_finger, middle_finger)
         current_time = time.time()
 
-        # Left Click
-        if dist_thumb_index < 25 and current_time - last_click_time > CLICK_DELAY:
-            if not left_clicked:
-                left_click()
-                left_clicked = True
-                last_click_time = current_time
+        # ----- Left Click OR Drag -----
+        if dist_thumb_index < (CLICK_DIST_THRESHOLD - CLICK_HYSTERESIS):
+            if not pinch_active:
+                pinch_active = True
+                pinch_start_time = current_time
         else:
-            left_clicked = False
+            # Pinch ended
+            if pinch_active:
+                pinch_duration = current_time - pinch_start_time
 
-        # Right Click
-        if dist_index_middle < 25 and current_time - last_click_time > CLICK_DELAY:
-            if not right_clicked:
-                right_click()
-                right_clicked = True
-                last_click_time = current_time
-        else:
-            right_clicked = False
+                # Case 1: Quick pinch → Click
+                if pinch_duration < DRAG_HOLD_DELAY and not drag_started:
+                    if current_time - last_click_time > CLICK_DELAY:
+                        left_click()
+                        last_click_time = current_time
 
-        # Dragging
-        if dist_thumb_index < 25:
-            if not drag_started:
+                # Case 2: Drag in progress → End it
+                elif drag_started:
+                    drag_end()
+                    drag_started = False
+
+            pinch_active = False
+
+        # Case 3: Pinch held long enough → Drag start
+        if pinch_active and not drag_started:
+            if current_time - pinch_start_time >= DRAG_HOLD_DELAY:
                 drag_start()
                 drag_started = True
+
+        # ----- Right Click -----
+        if dist_index_middle < (CLICK_DIST_THRESHOLD - CLICK_HYSTERESIS):
+            right_click_hold_frames += 1
+            if (
+                right_click_hold_frames > FRAME_THRESHOLD
+                and current_time - last_click_time > CLICK_DELAY
+            ):
+                right_click()
+                last_click_time = current_time
         else:
-            if drag_started:
-                drag_end()
-                drag_started = False
+            right_click_hold_frames = 0
 
         detector.draw_hands(frame)
 
     cv2.imshow("Smooth Hand Control", frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 cap.release()
